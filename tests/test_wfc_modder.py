@@ -16,12 +16,11 @@ from wfc_modder import (
 
 
 class EndpointTests(unittest.TestCase):
-    def test_accepts_same_width_ipv4(self):
+    def test_accepts_fixed_server(self):
         self.assertEqual(validate_endpoint(DEFAULT_SERVER), b"158.180.55.245")
-        self.assertEqual(validate_endpoint("203.111.22.233"), b"203.111.22.233")
 
-    def test_rejects_invalid_or_different_width_ipv4(self):
-        for endpoint in ("not-an-ip", "127.0.0.1", "158.180.55.256"):
+    def test_rejects_other_server_addresses(self):
+        for endpoint in ("not-an-ip", "127.0.0.1", "203.111.22.233", "158.180.55.256"):
             with self.subTest(endpoint=endpoint):
                 with self.assertRaises(ModderError):
                     validate_endpoint(endpoint)
@@ -38,11 +37,11 @@ class EndpointTests(unittest.TestCase):
 
     def test_rewrites_detected_service_and_url_fields_without_changing_size(self):
         dol = self.make_sample_dol()
-        output = rewrite_server_fields(dol, "203.111.22.233")
+        output = rewrite_server_fields(dol, DEFAULT_SERVER)
         self.assertEqual(len(output), len(dol))
-        self.assertEqual(output.count(b"http://203.111.22.233/ac"), 3)
-        self.assertEqual(output.count(b"http://203.111.22.233/pr"), 3)
-        self.assertEqual(output.count(b"203.111.22.233"), 28)
+        self.assertEqual(output.count(b"http://158.180.55.245/ac"), 3)
+        self.assertEqual(output.count(b"http://158.180.55.245/pr"), 3)
+        self.assertEqual(output.count(b"158.180.55.245"), 28)
 
     def test_rejects_missing_or_ambiguous_fields(self):
         valid = self.make_sample_dol()

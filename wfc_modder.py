@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
-import ipaddress
 import os
 import re
 import shutil
@@ -39,17 +38,9 @@ def sha256_file(path: Path) -> str:
 
 
 def validate_endpoint(endpoint: str) -> bytes:
-    try:
-        address = ipaddress.IPv4Address(endpoint.strip())
-    except ipaddress.AddressValueError as exc:
-        raise ModderError("Enter a valid IPv4 address for the WFC server.") from exc
-    endpoint_bytes = str(address).encode("ascii")
-    if len(endpoint_bytes) != len(DEFAULT_SERVER):
-        raise ModderError(
-            f"The endpoint must be a {len(DEFAULT_SERVER)}-character IPv4 address "
-            "so it fits safely in every detected field."
-        )
-    return endpoint_bytes
+    if endpoint.strip() != DEFAULT_SERVER:
+        raise ModderError(f"This modder always uses {DEFAULT_SERVER}.")
+    return DEFAULT_SERVER.encode("ascii")
 
 
 def find_network_strings(
@@ -417,7 +408,7 @@ def run_ui() -> int:
     print("RVZ needs DolphinTool; ISO and WBFS can be processed with WIT.")
     print("The source is never overwritten. A new WBFS container is rebuilt.")
     print("Unknown or ambiguous executable layouts are rejected without patching.")
-    print(f"Default WFC endpoint: {DEFAULT_SERVER}")
+    print(f"WFC endpoint (fixed): {DEFAULT_SERVER}")
     print()
 
     source = ask_file(
@@ -441,19 +432,7 @@ def run_ui() -> int:
         text = input(f"Output WBFS path [{default_output}]: ").strip().strip('"')
         destination = Path(text) if text else default_output
 
-    endpoint = input(f"WFC server IPv4 [{DEFAULT_SERVER}]: ").strip() or DEFAULT_SERVER
-    try:
-        address = ipaddress.IPv4Address(endpoint)
-        endpoint = str(address)
-    except ipaddress.AddressValueError:
-        print("Invalid IPv4 address.")
-        return 1
-    if len(endpoint) != len(DEFAULT_SERVER):
-        print(
-            f"Use a {len(DEFAULT_SERVER)}-character IPv4 address so it fits safely "
-            "in every detected field."
-        )
-        return 1
+    endpoint = DEFAULT_SERVER
 
     wit = select_tool("wit.exe", "Wiimms ISO Tool (WIT)")
     if wit is None:
@@ -468,7 +447,7 @@ def run_ui() -> int:
 
     print(f"\nInput:  {source.resolve()}")
     print(f"Output: {destination.resolve()}")
-    print(f"Server: {endpoint}")
+    print(f"Server: {endpoint} (fixed)")
     print("RVZ conversion requires about 5 GB of temporary disk space.")
     if input("Type BUILD to start: ").strip() != "BUILD":
         print("Cancelled.")

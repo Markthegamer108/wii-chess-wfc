@@ -1,10 +1,10 @@
 # Wii Chess WFC
 
-Turn a Wii Chess Europe image into a new WBFS that connects to the WFC server you choose. The tool changes `DATA/sys/main.dol` inside the image; your original file stays untouched.
+Turn a Wii Chess Europe image into a new WBFS configured for `158.180.55.245`. The tool changes `DATA/sys/main.dol` inside the image; your original file stays untouched.
 
 ## What it changes
 
-It finds 22 Nintendo WFC service addresses and six WiiConnect24 `naswii` URLs in `main.dol`. It points the service addresses at your server and changes the URLs to `http://<server>/ac` or `http://<server>/pr`. The patched `main.dol` stays the same size.
+It finds 22 Nintendo WFC service addresses and six WiiConnect24 `naswii` URLs in `main.dol`. It points them all at `158.180.55.245` and changes the URLs to `http://158.180.55.245/ac` or `http://158.180.55.245/pr`. The patched `main.dol` stays the same size. This server is fixed; the tool doesn't accept a different one.
 
 The tool checks the fields before it changes anything. If they're missing, duplicated, or in a format it doesn't recognize, it stops instead of guessing. It only accepts Wii Chess Europe (`RTYP01`).
 
@@ -14,7 +14,7 @@ Install [Wiimms ISO Tools](https://wit.wiimm.de/) for `wit.exe`. For `.rvz` imag
 
 On Windows, double-click `Run WFC Modder.bat`. It runs `WFC Modder.exe` if you've built it; otherwise it starts the Python script. You can also run `py -3 wfc_modder.py`.
 
-Choose a `.rvz`, `.iso`, or `.wbfs` input, then choose a new `.wbfs` output. Enter a server IPv4 address or press Enter for `158.180.55.245`. The address must be valid and 14 characters long so it fits the game's fields. Type `BUILD` to start.
+Choose a `.rvz`, `.iso`, or `.wbfs` input, then choose a new `.wbfs` output. The server is always `158.180.55.245`. Type `BUILD` to start.
 
 `.rvz` files are converted to a temporary ISO first, which needs about 5 GB of free space. The input image is never overwritten, and the tool won't overwrite an existing output file.
 
