@@ -1,6 +1,6 @@
 # Wii Chess WFC
 
-Got a Wii Chess Europe (`RTYP01`) image? This rebuilds it as a WBFS pointed at `158.180.55.245`. It changes `DATA/sys/main.dol`; your input stays put.
+Got a Wii Chess PAL (`RTYP01`) image? This rebuilds it as a WBFS pointed at `158.180.55.245`. It changes `DATA/sys/main.dol`; your input stays put.
 
 ## What it changes
 
