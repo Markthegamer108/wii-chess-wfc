@@ -3,28 +3,31 @@
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import ipaddress
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import uuid
-import ctypes
 from pathlib import Path
 
 
 GAME_ID = "RTYP01"
-STOCK_DOL_SHA256 = "04292ff831f2e699be0edee09010a89bf62bc39250e595485d21385c3ca82d43"
 DEFAULT_SERVER = "158.180.55.245"
-PATCHED_DOL_SHA256 = "ce589b174b7258616402c1bf050b2e9b2f447967c6fc9ff53f13decae7e8c4d1"
-PATCH_SHA256 = "42791c7093e26943b1e02c436c891acb78e2722133725de2fc5857f7182e927a"
-PATCH_RECORD_COUNT = 28
+SERVICE_STRING_COUNT = 22
+NAS_URL_COUNT = 6
+NAS_URL_PATTERN = re.compile(
+    rb"https://naswii(?:\.test|\.dev)?\.nintendowifi\.net/(?:ac|pr)",
+    re.IGNORECASE,
+)
 
 
 class ModderError(Exception):
-    """A source image, patch, tool, or output failed validation."""
+    """A source image, executable, tool, or output failed validation."""
 
 
 def sha256_file(path: Path) -> str:
@@ -35,74 +38,6 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def patch_resource() -> Path:
-    roots = [Path(getattr(sys, "_MEIPASS", Path(__file__).parent)), Path(__file__).parent]
-    for root in roots:
-        candidate = root / "patches" / "wii_chess_europe.ips"
-        if candidate.is_file():
-            return candidate
-    expected = Path(__file__).parent / "patches" / "wii_chess_europe.ips"
-    raise ModderError(
-        f"Required IPS patch is missing: {expected}. "
-        "This file is not included; see patches/README.md."
-    )
-
-
-def load_patch_resource() -> bytes:
-    patch = patch_resource().read_bytes()
-    if hashlib.sha256(patch).hexdigest() != PATCH_SHA256:
-        raise ModderError("The supplied IPS patch failed its SHA-256 integrity check.")
-    if len(parse_ips(patch)) != PATCH_RECORD_COUNT:
-        raise ModderError("The supplied IPS patch has an unexpected record count.")
-    return patch
-
-
-def parse_ips(patch: bytes) -> list[tuple[int, bytes]]:
-    if not patch.startswith(b"PATCH"):
-        raise ModderError("The supplied patch has an invalid IPS header.")
-    records: list[tuple[int, bytes]] = []
-    cursor = 5
-    while True:
-        if cursor + 3 > len(patch):
-            raise ModderError("The supplied IPS patch is truncated before EOF.")
-        if patch[cursor:cursor + 3] == b"EOF":
-            cursor += 3
-            break
-        if cursor + 5 > len(patch):
-            raise ModderError("The supplied IPS patch contains a truncated record.")
-        offset = int.from_bytes(patch[cursor:cursor + 3], "big")
-        size = int.from_bytes(patch[cursor + 3:cursor + 5], "big")
-        cursor += 5
-        if size:
-            end = cursor + size
-            if end > len(patch):
-                raise ModderError("The supplied IPS patch contains truncated record data.")
-            records.append((offset, patch[cursor:end]))
-            cursor = end
-        else:
-            if cursor + 3 > len(patch):
-                raise ModderError("The supplied IPS patch contains a truncated RLE record.")
-            run_length = int.from_bytes(patch[cursor:cursor + 2], "big")
-            value = patch[cursor + 2]
-            cursor += 3
-            if run_length == 0:
-                raise ModderError("The supplied IPS patch contains an empty RLE record.")
-            records.append((offset, bytes([value]) * run_length))
-    if cursor != len(patch):
-        raise ModderError("The supplied IPS patch has unsupported trailing data.")
-    return records
-
-
-def apply_ips(source: bytes, patch: bytes) -> bytes:
-    result = bytearray(source)
-    for offset, replacement in parse_ips(patch):
-        end = offset + len(replacement)
-        if end > len(result):
-            raise ModderError("The patch writes beyond the supported DOL length.")
-        result[offset:end] = replacement
-    return bytes(result)
-
-
 def validate_endpoint(endpoint: str) -> bytes:
     try:
         address = ipaddress.IPv4Address(endpoint.strip())
@@ -111,52 +46,81 @@ def validate_endpoint(endpoint: str) -> bytes:
     endpoint_bytes = str(address).encode("ascii")
     if len(endpoint_bytes) != len(DEFAULT_SERVER):
         raise ModderError(
-            f"This verified patch only safely supports {len(DEFAULT_SERVER)}-character IPv4 addresses. "
-            "A shorter address would shift URL paths in this build."
+            f"The endpoint must be a {len(DEFAULT_SERVER)}-character IPv4 address "
+            "so it fits safely in every detected field."
         )
     return endpoint_bytes
 
 
-def rewrite_server_fields(patched: bytes, endpoint: str) -> bytes:
-    endpoint_bytes = validate_endpoint(endpoint)
-    original_ip = DEFAULT_SERVER.encode("ascii")
-    positions: list[int] = []
-    cursor = 0
-    while True:
-        position = patched.find(original_ip, cursor)
-        if position < 0:
-            break
-        positions.append(position)
-        cursor = position + len(original_ip)
-    if len(positions) != PATCH_RECORD_COUNT:
+def find_network_strings(
+    dol: bytes,
+) -> tuple[list[tuple[int, bytes]], list[tuple[int, bytes]]]:
+    strings = [
+        (match.start(), match.group()[:-1])
+        for match in re.finditer(rb"[\x20-\x7e]+\x00", dol)
+    ]
+    service_strings = [
+        (offset, value)
+        for offset, value in strings
+        if b".gs.nintendowifi.net" in value.lower()
+    ]
+    network_urls = [
+        (offset, value)
+        for offset, value in strings
+        if b"https://" in value.lower() and b"nintendowifi.net" in value.lower()
+    ]
+    if len(service_strings) != SERVICE_STRING_COUNT:
         raise ModderError(
-            f"Expected {PATCH_RECORD_COUNT} server address fields in the patched DOL; "
-            f"found {len(positions)}."
+            f"Expected {SERVICE_STRING_COUNT} recognizable service fields; "
+            f"found {len(service_strings)}. This executable revision is not verified."
         )
+    if len(network_urls) != NAS_URL_COUNT:
+        raise ModderError(
+            f"Expected {NAS_URL_COUNT} recognizable WiiConnect24 URL fields; "
+            f"found {len(network_urls)}. This executable revision is not verified."
+        )
+    if any(NAS_URL_PATTERN.fullmatch(value) is None for _, value in network_urls):
+        raise ModderError(
+            "A WiiConnect24 URL has an unrecognized format. "
+            "This executable revision is not verified."
+        )
+    if len({value.lower() for _, value in network_urls}) != NAS_URL_COUNT:
+        raise ModderError(
+            "WiiConnect24 URL fields are duplicated or ambiguous. "
+            "This executable revision is not verified."
+        )
+    return service_strings, network_urls
 
-    output = bytearray(patched)
-    for position in positions:
-        output[position:position + len(endpoint_bytes)] = endpoint_bytes
-    for position in positions:
-        if output[position:position + len(endpoint_bytes)] != endpoint_bytes:
+
+def rewrite_server_fields(stock_dol: bytes, endpoint: str) -> bytes:
+    endpoint_bytes = validate_endpoint(endpoint)
+    service_strings, network_urls = find_network_strings(stock_dol)
+    replacements = [
+        (offset, value, endpoint_bytes)
+        for offset, value in service_strings
+    ]
+    replacements.extend(
+        (offset, value, b"http://" + endpoint_bytes + b"/" + value.rsplit(b"/", 1)[1])
+        for offset, value in network_urls
+    )
+    output = bytearray(stock_dol)
+    for offset, original, replacement in replacements:
+        if len(replacement) > len(original):
+            raise ModderError("A replacement endpoint does not fit its executable field.")
+        output[offset:offset + len(original)] = replacement + b"\x00" * (
+            len(original) - len(replacement)
+        )
+    result = bytes(output)
+    for offset, _, replacement in replacements:
+        if result[offset:offset + len(replacement)] != replacement:
             raise ModderError("Endpoint replacement verification failed.")
-    if endpoint_bytes == original_ip and bytes(output) != patched:
-        raise ModderError("Default endpoint must reproduce the verified patch exactly.")
-    return bytes(output)
-
-
-def make_endpoint_dol(stock_dol: bytes, ips: bytes, endpoint: str) -> bytes:
-    if hashlib.sha256(stock_dol).hexdigest() != STOCK_DOL_SHA256:
-        raise ModderError("Stock DOL SHA-256 does not match the supported Wii Chess Europe revision.")
-    if len(parse_ips(ips)) != PATCH_RECORD_COUNT:
-        raise ModderError(f"Expected {PATCH_RECORD_COUNT} known patch records.")
-    patched = apply_ips(stock_dol, ips)
-    if hashlib.sha256(patched).hexdigest() != PATCHED_DOL_SHA256:
-        raise ModderError("The supplied IPS result does not match the verified Wii Chess patch.")
-    output = rewrite_server_fields(patched, endpoint)
-    if len(output) != len(stock_dol):
+    if len(result) != len(stock_dol):
         raise ModderError("Internal error: patched DOL size changed.")
-    return output
+    return result
+
+
+def make_endpoint_dol(stock_dol: bytes, endpoint: str) -> bytes:
+    return rewrite_server_fields(stock_dol, endpoint)
 
 
 def run_tool(executable: Path, args: list[str], label: str) -> str:
@@ -281,7 +245,6 @@ def make_wbfs(
     if source.suffix.lower() == ".rvz" and (dolphin_tool is None or not dolphin_tool.is_file()):
         raise ModderError("RVZ input requires DolphinTool.exe. Select it or use ISO/WBFS input.")
 
-    patch_bytes = load_patch_resource()
     destination.parent.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="WiiChessWFC-"))
     temporary_output = destination.with_name(f".{destination.stem}.{uuid.uuid4().hex}.tmp.wbfs")
@@ -327,15 +290,9 @@ def make_wbfs(
             raise ModderError("Image extraction did not produce DATA/sys/main.dol.")
         stock_dol = stock_dol_path.read_bytes()
         stock_digest = hashlib.sha256(stock_dol).hexdigest()
-        if stock_digest != STOCK_DOL_SHA256:
-            raise ModderError(
-                "Unsupported Wii Chess executable revision. This profile accepts only the "
-                "verified Europe stock DOL hash "
-                f"{STOCK_DOL_SHA256.upper()}; this image has {stock_digest.upper()}."
-            )
 
-        progress(f"Applying the verified WFC patch for {endpoint}...")
-        patched_dol = make_endpoint_dol(stock_dol, patch_bytes, endpoint)
+        progress(f"Finding WFC server fields and applying {endpoint}...")
+        patched_dol = make_endpoint_dol(stock_dol, endpoint)
         stock_dol_path.write_bytes(patched_dol)
 
         progress("Composing a new WBFS image with WIT...")
@@ -453,19 +410,13 @@ def select_tool(name: str, label: str) -> Path | None:
 
 
 def run_ui() -> int:
-    try:
-        load_patch_resource()
-    except (OSError, ModderError) as exc:
-        print(f"Cannot start: {exc}")
-        return 1
-
     print("=" * 66)
-    print("  Wii Chess WFC Modder - verified Europe WBFS builder")
+    print("  Wii Chess WFC Converter")
     print("=" * 66)
-    print("Accepts Wii Chess Europe images only (verified RTYP01 / stock DOL hash).")
+    print("For Wii Chess Europe (RTYP01). Server fields are detected by content.")
     print("RVZ needs DolphinTool; ISO and WBFS can be processed with WIT.")
     print("The source is never overwritten. A new WBFS container is rebuilt.")
-    print("Game files are checked; WIT regenerates known partition and package metadata.")
+    print("Unknown or ambiguous executable layouts are rejected without patching.")
     print(f"Default WFC endpoint: {DEFAULT_SERVER}")
     print()
 
@@ -499,8 +450,8 @@ def run_ui() -> int:
         return 1
     if len(endpoint) != len(DEFAULT_SERVER):
         print(
-            f"This verified patch safely supports only {len(DEFAULT_SERVER)}-character IPv4 addresses. "
-            "A shorter address can shift the URL paths in this game build."
+            f"Use a {len(DEFAULT_SERVER)}-character IPv4 address so it fits safely "
+            "in every detected field."
         )
         return 1
 
@@ -548,9 +499,8 @@ def run_ui() -> int:
 if __name__ == "__main__":
     try:
         if len(sys.argv) > 1 and sys.argv[1] == "--self-test":
-            load_patch_resource()
             validate_endpoint(DEFAULT_SERVER)
-            print("Wii Chess WFC Modder self-test passed; supplied IPS patch is verified.")
+            print("Wii Chess WFC Converter self-test passed.")
             sys.exit(0)
         sys.exit(run_ui())
     except (OSError, ModderError) as exc:

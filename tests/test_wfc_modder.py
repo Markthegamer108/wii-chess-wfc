@@ -1,36 +1,18 @@
+import hashlib
+import os
 import tempfile
 import unittest
 from pathlib import Path
-import os
 
 from wfc_modder import (
     DEFAULT_SERVER,
     ModderError,
-    apply_ips,
     compare_game_files,
     make_endpoint_dol,
-    parse_ips,
     rewrite_server_fields,
     tool_path,
     validate_endpoint,
 )
-
-
-class IpsTests(unittest.TestCase):
-    def test_parse_and_apply_literal_ips_records(self):
-        patch = b"PATCH" + (2).to_bytes(3, "big") + (3).to_bytes(2, "big") + b"xyz" + b"EOF"
-        self.assertEqual(parse_ips(patch), [(2, b"xyz")])
-        self.assertEqual(apply_ips(b"abcdef", patch), b"abxyzf")
-
-    def test_rejects_malformed_ips(self):
-        with self.assertRaisesRegex(ModderError, "header"):
-            parse_ips(b"NOPEEOF")
-        with self.assertRaisesRegex(ModderError, "truncated"):
-            parse_ips(b"PATCH\x00")
-
-    def test_accepts_empty_valid_ips_record_list(self):
-        patch = b"PATCH" + b"EOF"
-        self.assertEqual(parse_ips(patch), [])
 
 
 class EndpointTests(unittest.TestCase):
@@ -44,22 +26,49 @@ class EndpointTests(unittest.TestCase):
                 with self.assertRaises(ModderError):
                     validate_endpoint(endpoint)
 
-    def test_rewrites_only_the_verified_fixed_width_address_fields(self):
-        old = DEFAULT_SERVER.encode("ascii")
-        new = b"203.111.22.233"
-        template = b"head" + b"|".join([old] * 28) + b"|tail"
-        output = rewrite_server_fields(template, new.decode("ascii"))
-        self.assertEqual(len(output), len(template))
-        self.assertEqual(output.count(new), 28)
-        self.assertEqual(output.replace(new, old), template)
+    @staticmethod
+    def make_sample_dol() -> bytes:
+        services = [f"service-{index}.gs.nintendowifi.net".encode() for index in range(22)]
+        urls = [
+            f"https://naswii{environment}.nintendowifi.net/{route}".encode()
+            for environment in ("", ".test", ".dev")
+            for route in ("ac", "pr")
+        ]
+        return b"\x00".join(services + urls) + b"\x00"
 
-    def test_rejects_wrong_number_of_endpoint_slots(self):
-        with self.assertRaisesRegex(ModderError, "Expected 28"):
-            rewrite_server_fields(DEFAULT_SERVER.encode("ascii"), DEFAULT_SERVER)
+    def test_rewrites_detected_service_and_url_fields_without_changing_size(self):
+        dol = self.make_sample_dol()
+        output = rewrite_server_fields(dol, "203.111.22.233")
+        self.assertEqual(len(output), len(dol))
+        self.assertEqual(output.count(b"http://203.111.22.233/ac"), 3)
+        self.assertEqual(output.count(b"http://203.111.22.233/pr"), 3)
+        self.assertEqual(output.count(b"203.111.22.233"), 28)
 
-    def test_stock_dol_requires_exact_supported_hash(self):
-        with self.assertRaisesRegex(ModderError, "SHA-256"):
-            make_endpoint_dol(b"not a Wii Chess DOL", b"PATCHEOF", DEFAULT_SERVER)
+    def test_rejects_missing_or_ambiguous_fields(self):
+        valid = self.make_sample_dol()
+        with self.assertRaisesRegex(ModderError, "Expected 22"):
+            rewrite_server_fields(valid.replace(b"service-0.gs.nintendowifi.net", b"service-0.invalid"), DEFAULT_SERVER)
+        with self.assertRaisesRegex(ModderError, "Expected 6"):
+            rewrite_server_fields(
+                valid.replace(
+                    b"https://naswii.test.nintendowifi.net/pr\x00",
+                    b"\x00",
+                ),
+                DEFAULT_SERVER,
+            )
+
+    def test_rejects_unrecognized_or_duplicate_wii_connect24_urls(self):
+        valid = self.make_sample_dol()
+        malformed = valid.replace(b"naswii.test", b"naswii.other", 1)
+        with self.assertRaisesRegex(ModderError, "unrecognized format"):
+            rewrite_server_fields(malformed, DEFAULT_SERVER)
+        duplicate = valid.replace(b"naswii.test.nintendowifi.net/pr", b"naswii.nintendowifi.net/ac")
+        with self.assertRaisesRegex(ModderError, "ambiguous"):
+            rewrite_server_fields(duplicate, DEFAULT_SERVER)
+
+    def test_rejects_unknown_dol_layout(self):
+        with self.assertRaisesRegex(ModderError, "not verified"):
+            make_endpoint_dol(b"not a Wii Chess DOL", DEFAULT_SERVER)
 
 
 class FileComparisonTests(unittest.TestCase):
@@ -125,15 +134,16 @@ class ToolPathTests(unittest.TestCase):
 
 
 class LocalDOLIntegrationTests(unittest.TestCase):
-    def test_known_stock_dol_matches_saved_patched_template(self):
+    def test_known_europe_dol_generates_verified_default_patch(self):
         stock_path = os.environ.get("WII_CHESS_TEST_STOCK_DOL")
-        patched_path = os.environ.get("WII_CHESS_TEST_PATCHED_DOL")
-        if not stock_path or not patched_path:
-            self.skipTest("Set WII_CHESS_TEST_STOCK_DOL and WII_CHESS_TEST_PATCHED_DOL to run.")
+        if not stock_path:
+            self.skipTest("Set WII_CHESS_TEST_STOCK_DOL to a local Europe main.dol to run.")
         stock = Path(stock_path).read_bytes()
-        known_patched = Path(patched_path).read_bytes()
-        generated = make_endpoint_dol(stock, (Path(__file__).parents[1] / "patches" / "wii_chess_europe.ips").read_bytes(), DEFAULT_SERVER)
-        self.assertEqual(generated, known_patched)
+        generated = make_endpoint_dol(stock, DEFAULT_SERVER)
+        self.assertEqual(
+            hashlib.sha256(generated).hexdigest(),
+            "ce589b174b7258616402c1bf050b2e9b2f447967c6fc9ff53f13decae7e8c4d1",
+        )
 
 
 if __name__ == "__main__":

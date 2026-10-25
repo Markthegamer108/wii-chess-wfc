@@ -1,43 +1,47 @@
-# Wii Chess WFC Modder
+# Wii Chess WFC
 
-This is a small converter for Wii Chess Europe. It takes a game image you already have and rebuilds it as a new WBFS with the WFC patch applied. It does not include a game image or overwrite the input.
+Convert a Wii Chess Europe image you already have into a new WBFS with the
+WFC server fields changed. The source image is never overwritten. The
+rebuilt WBFS is a new container and is not byte-for-byte identical to the
+input.
 
-The project only supports the Europe release (`RTYP01`) with stock `main.dol` SHA-256 `04292ff831f2e699be0edee09010a89bf62bc39250e595485d21385c3ca82d43`.
+## Quick start
 
-## Before you run it
+1. Install [Wiimms ISO Tools](https://wit.wiimm.de/) (WIT). `.rvz` input also
+   requires Dolphin's `DolphinTool.exe`.
+2. Run `Run WFC Modder.bat` on Windows, or run `py -3 wfc_modder.py`.
+3. Choose your `.rvz`, `.iso`, or `.wbfs` input, then choose a new `.wbfs`
+   output. Select WIT/DolphinTool if they are not detected automatically.
+   Press Enter at the server prompt to use `158.180.55.245`.
 
-- Use your own Wii Chess Europe image in `.rvz`, `.iso`, or `.wbfs` format.
-- Install Wiimms ISO Tools (WIT). RVZ files also need Dolphin's `DolphinTool.exe`.
-- Obtain an authorized copy of `wii_chess_europe.ips` separately and put it in `patches\wii_chess_europe.ips`. The patch is intentionally not included here because it contains replacement game code. Its SHA-256 must be `42791c7093e26943b1e02c436c891acb78e2722133725de2fc5857f7182e927a`. See [patches/README.md](patches/README.md).
+No separate IPS patch file is needed. The converter scans the extracted
+`main.dol` for the expected Nintendo WFC service strings and WiiConnect24 URLs,
+then replaces those fields in place. It requires 22 service-string fields and
+six distinct URLs in the recognized format. Missing, duplicated, or
+unrecognized fields stop conversion before an output is created.
 
-Without that patch file, the app stops with an error before processing an image. This repository by itself is not enough to make a converted game.
+## Compatibility
 
-## Run it
+The image must be Wii Chess Europe (`RTYP01`). The content scanner was
+validated against one local Europe sample; its default-server output exactly
+matches the previously verified patched DOL. This does not establish support
+for every Europe revision. Different executable layouts may be rejected; the
+converter fails closed rather than guessing offsets.
 
-On Windows, double-click `Run WFC Modder.bat`, or run:
-
-```text
-py -3 wfc_modder.py
-```
-
-Choose the input image, a new output filename, and the WIT/DolphinTool executables when asked. The output is a newly rebuilt WBFS; it will not be byte-for-byte identical to the input container. The tool checks the game ID and stock executable hash and verifies the rebuilt files. Only `DATA/sys/main.dol` is patched; the source image is left alone.
-
-The default server is `158.180.55.245`. A custom IPv4 address must be 14 characters long; shorter or longer addresses are rejected.
+A custom server must be a valid 14-character IPv4 address so it fits in the
+detected fields without shifting the URL paths.
 
 ## Build and tests
 
-Install Python 3 and PyInstaller:
+Install Python 3 and PyInstaller, then run `Build EXE.bat`. The generated
+executable is for your own use and is not included in this repository.
 
-```text
-py -3 -m pip install pyinstaller
-```
-
-With the separately obtained patch file in place, run `Build EXE.bat`. The generated executable is for your own use and is not part of this repository.
-
-Run the tests with:
+Run tests with:
 
 ```text
 py -3 -m unittest discover -s tests -v
 ```
 
-The optional integration test needs stock and patched DOL files from your own copy of the game. Set `WII_CHESS_TEST_STOCK_DOL` and `WII_CHESS_TEST_PATCHED_DOL` to their paths before running the test suite.
+The optional sample integration test uses a local Europe `main.dol` when
+`WII_CHESS_TEST_STOCK_DOL` is set to its path. No game files are needed for
+the unit tests.
