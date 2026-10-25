@@ -1,12 +1,12 @@
 # Wii Chess WFC
 
-Turn a Wii Chess Europe image into a new WBFS configured for `158.180.55.245`. The tool changes `DATA/sys/main.dol` inside the image; your original file stays untouched.
+Got a Wii Chess Europe (`RTYP01`) image? This rebuilds it as a WBFS pointed at `158.180.55.245`. It changes `DATA/sys/main.dol`; your input stays put.
 
 ## What it changes
 
-It finds 22 Nintendo WFC service addresses and six WiiConnect24 `naswii` URLs in `main.dol`. It points them all at `158.180.55.245` and changes the URLs to `http://158.180.55.245/ac` or `http://158.180.55.245/pr`. The patched `main.dol` stays the same size. This server is fixed; the tool doesn't accept a different one.
+`main.dol` has 22 Nintendo WFC service addresses and six WiiConnect24 `naswii` URLs. The tool points them at `158.180.55.245`; the URLs become `http://158.180.55.245/ac` or `http://158.180.55.245/pr`. The patched file stays the same size. The server is fixed.
 
-The tool checks the fields before it changes anything. If they're missing, duplicated, or in a format it doesn't recognize, it stops instead of guessing. It only accepts Wii Chess Europe (`RTYP01`).
+If the fields are missing, duplicated, or don't match the format it expects, the tool stops. It won't guess at a different DOL layout.
 
 ## Run it
 
@@ -14,15 +14,15 @@ Install [Wiimms ISO Tools](https://wit.wiimm.de/) for `wit.exe`. For `.rvz` imag
 
 On Windows, double-click `Run WFC Modder.bat`. It runs `WFC Modder.exe` if you've built it; otherwise it starts the Python script. You can also run `py -3 wfc_modder.py`.
 
-Choose a `.rvz`, `.iso`, or `.wbfs` input, then choose a new `.wbfs` output. The server is always `158.180.55.245`. Type `BUILD` to start.
+Choose a `.rvz`, `.iso`, or `.wbfs` input and a new `.wbfs` output. The server is always `158.180.55.245`. Type `BUILD` to start.
 
 `.rvz` files are converted to a temporary ISO first, which needs about 5 GB of free space. The input image is never overwritten, and the tool won't overwrite an existing output file.
 
 ## What gets checked
 
-The tool checks the game ID, extracts the image, patches `main.dol`, and builds a new WBFS. It then extracts that WBFS again, verifies the patched `main.dol`, and compares the other game files in the DATA and UPDATE partitions. It also checks that the source image hasn't changed.
+The tool checks the game ID, extracts the image, patches `main.dol`, and builds a WBFS. It extracts the result again to check the patched file and compare the other DATA and UPDATE game files. It also checks that the source image hasn't changed.
 
-WIT rebuilds the WBFS container and regenerates its metadata, so the output won't be byte-for-byte identical to the input.
+WIT rebuilds the WBFS and its metadata, so the output won't match the input byte for byte.
 
 ## Build and test
 

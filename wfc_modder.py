@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a Wii Chess Europe WFC WBFS from a verified user-owned image."""
+"""Build a Wii Chess Europe WBFS for the fixed WFC server."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ NAS_URL_PATTERN = re.compile(
 
 
 class ModderError(Exception):
-    """A source image, executable, tool, or output failed validation."""
+    """Raised when an image, tool, or output can't be used."""
 
 
 def sha256_file(path: Path) -> str:
@@ -63,22 +63,20 @@ def find_network_strings(
     if len(service_strings) != SERVICE_STRING_COUNT:
         raise ModderError(
             f"Expected {SERVICE_STRING_COUNT} recognizable service fields; "
-            f"found {len(service_strings)}. This executable revision is not verified."
+            f"found {len(service_strings)}. This DOL layout isn't supported."
         )
     if len(network_urls) != NAS_URL_COUNT:
         raise ModderError(
             f"Expected {NAS_URL_COUNT} recognizable WiiConnect24 URL fields; "
-            f"found {len(network_urls)}. This executable revision is not verified."
+            f"found {len(network_urls)}. This DOL layout isn't supported."
         )
     if any(NAS_URL_PATTERN.fullmatch(value) is None for _, value in network_urls):
         raise ModderError(
-            "A WiiConnect24 URL has an unrecognized format. "
-            "This executable revision is not verified."
+            "A WiiConnect24 URL has an unexpected format. This DOL layout isn't supported."
         )
     if len({value.lower() for _, value in network_urls}) != NAS_URL_COUNT:
         raise ModderError(
-            "WiiConnect24 URL fields are duplicated or ambiguous. "
-            "This executable revision is not verified."
+            "WiiConnect24 URL fields are duplicated. This DOL layout isn't supported."
         )
     return service_strings, network_urls
 
@@ -269,7 +267,7 @@ def make_wbfs(
         progress("Checking game identity with WIT...")
         get_game_id(wit, current_image)
 
-        progress("Extracting the Wii image to a private temporary workspace...")
+        progress("Extracting the Wii image...")
         extracted = work / "disc"
         run_tool(
             wit,
@@ -295,7 +293,7 @@ def make_wbfs(
         )
         if not working_output.is_file() or working_output.stat().st_size == 0:
             raise ModderError("WIT did not create a non-empty WBFS output.")
-        progress("Re-extracting the WBFS and comparing all game files...")
+        progress("Checking the rebuilt WBFS...")
         rebuilt = work / "rebuilt"
         run_tool(
             wit,
@@ -402,12 +400,12 @@ def select_tool(name: str, label: str) -> Path | None:
 
 def run_ui() -> int:
     print("=" * 66)
-    print("  Wii Chess WFC Converter")
+    print("  Wii Chess WFC")
     print("=" * 66)
-    print("For Wii Chess Europe (RTYP01). Server fields are detected by content.")
-    print("RVZ needs DolphinTool; ISO and WBFS can be processed with WIT.")
-    print("The source is never overwritten. A new WBFS container is rebuilt.")
-    print("Unknown or ambiguous executable layouts are rejected without patching.")
+    print("Wii Chess Europe (RTYP01) only.")
+    print("RVZ needs DolphinTool. All formats need WIT.")
+    print("Your input stays untouched; the tool builds a new WBFS.")
+    print("If the DOL layout doesn't match, conversion stops.")
     print(f"WFC endpoint (fixed): {DEFAULT_SERVER}")
     print()
 
@@ -458,7 +456,7 @@ def run_ui() -> int:
         print(f"\nBuild failed: {exc}")
         return 1
 
-    print("\nNew WFC WBFS built and verified.")
+    print("\nDone. The new WBFS passed its checks.")
     print(f"Output: {destination.resolve()}")
     print(f"Size: {result['output_size']:,} bytes")
     print(f"Server endpoint: {result['endpoint']}")
@@ -471,7 +469,7 @@ def run_ui() -> int:
         "main.dol was patched and WIT regenerated h3/setup/ticket/TMD, disc/region.bin, "
         "and sys/fst.bin metadata."
     )
-    print("The rebuilt WBFS container is not byte-identical to the source image.")
+    print("WIT rebuilt the WBFS, so it won't match the source byte for byte.")
     return 0
 
 

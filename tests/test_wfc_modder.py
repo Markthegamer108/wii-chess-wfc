@@ -66,7 +66,7 @@ class EndpointTests(unittest.TestCase):
             rewrite_server_fields(duplicate, DEFAULT_SERVER)
 
     def test_rejects_unknown_dol_layout(self):
-        with self.assertRaisesRegex(ModderError, "not verified"):
+        with self.assertRaisesRegex(ModderError, "isn't supported"):
             make_endpoint_dol(b"not a Wii Chess DOL", DEFAULT_SERVER)
 
 
