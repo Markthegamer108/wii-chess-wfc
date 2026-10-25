@@ -37,12 +37,6 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def validate_endpoint(endpoint: str) -> bytes:
-    if endpoint.strip() != DEFAULT_SERVER:
-        raise ModderError(f"This modder always uses {DEFAULT_SERVER}.")
-    return DEFAULT_SERVER.encode("ascii")
-
-
 def find_network_strings(
     dol: bytes,
 ) -> tuple[list[tuple[int, bytes]], list[tuple[int, bytes]]]:
@@ -81,15 +75,15 @@ def find_network_strings(
     return service_strings, network_urls
 
 
-def rewrite_server_fields(stock_dol: bytes, endpoint: str) -> bytes:
-    endpoint_bytes = validate_endpoint(endpoint)
+def rewrite_server_fields(stock_dol: bytes) -> bytes:
+    server_bytes = DEFAULT_SERVER.encode("ascii")
     service_strings, network_urls = find_network_strings(stock_dol)
     replacements = [
-        (offset, value, endpoint_bytes)
+        (offset, value, server_bytes)
         for offset, value in service_strings
     ]
     replacements.extend(
-        (offset, value, b"http://" + endpoint_bytes + b"/" + value.rsplit(b"/", 1)[1])
+        (offset, value, b"http://" + server_bytes + b"/" + value.rsplit(b"/", 1)[1])
         for offset, value in network_urls
     )
     output = bytearray(stock_dol)
@@ -106,10 +100,6 @@ def rewrite_server_fields(stock_dol: bytes, endpoint: str) -> bytes:
     if len(result) != len(stock_dol):
         raise ModderError("Internal error: patched DOL size changed.")
     return result
-
-
-def make_endpoint_dol(stock_dol: bytes, endpoint: str) -> bytes:
-    return rewrite_server_fields(stock_dol, endpoint)
 
 
 def run_tool(executable: Path, args: list[str], label: str) -> str:
@@ -154,7 +144,7 @@ def tool_path(path: Path) -> str:
     return buffer.value
 
 
-def get_game_id(wit: Path, image: Path) -> str:
+def get_game_id(wit: Path, image: Path) -> None:
     output = run_tool(wit, ["ID6", tool_path(image)], "WIT ID check")
     ids = [line.strip() for line in output.splitlines() if line.strip()]
     if GAME_ID not in ids:
@@ -162,11 +152,10 @@ def get_game_id(wit: Path, image: Path) -> str:
             f"Unsupported game image. Expected Wii Chess Europe ({GAME_ID}); "
             f"WIT reported: {', '.join(ids) or '(no game ID)'}."
         )
-    return GAME_ID
 
 
-def compare_game_files(original_root: Path, output_root: Path) -> tuple[int, int]:
-    """Compare extracted game files; WIT's partition packaging metadata is regenerated."""
+def compare_game_files(original_root: Path, output_root: Path) -> int:
+    """Compare the game files WIT doesn't regenerate."""
     checked = 0
     for partition in ("DATA", "UPDATE"):
         original = original_root / partition
@@ -206,7 +195,7 @@ def compare_game_files(original_root: Path, output_root: Path) -> tuple[int, int
             if sha256_file(source_file) != sha256_file(output_file):
                 raise ModderError(f"Rebuilt game file content differs: {partition}/{relative}")
             checked += 1
-    return checked, 1
+    return checked
 
 
 def make_wbfs(
@@ -214,8 +203,6 @@ def make_wbfs(
     destination: Path,
     wit: Path,
     dolphin_tool: Path | None,
-    endpoint: str,
-    progress=print,
 ) -> dict[str, str | int]:
     source = source_image.resolve(strict=True)
     destination = destination.resolve()
@@ -246,7 +233,7 @@ def make_wbfs(
             shutil.copy2(source, staged_input)
         current_image = staged_input
         if source.suffix.lower() == ".rvz":
-            progress("Converting RVZ to a temporary ISO with DolphinTool...")
+            print("Converting RVZ to a temporary ISO with DolphinTool...")
             current_image = work / "input.iso"
             run_tool(
                 dolphin_tool,  # type: ignore[arg-type]
@@ -264,10 +251,10 @@ def make_wbfs(
             if not current_image.is_file():
                 raise ModderError("DolphinTool reported success but did not create the temporary ISO.")
 
-        progress("Checking game identity with WIT...")
+        print("Checking game identity with WIT...")
         get_game_id(wit, current_image)
 
-        progress("Extracting the Wii image...")
+        print("Extracting the Wii image...")
         extracted = work / "disc"
         run_tool(
             wit,
@@ -280,11 +267,11 @@ def make_wbfs(
         stock_dol = stock_dol_path.read_bytes()
         stock_digest = hashlib.sha256(stock_dol).hexdigest()
 
-        progress(f"Finding WFC server fields and applying {endpoint}...")
-        patched_dol = make_endpoint_dol(stock_dol, endpoint)
+        print(f"Pointing the WFC fields at {DEFAULT_SERVER}...")
+        patched_dol = rewrite_server_fields(stock_dol)
         stock_dol_path.write_bytes(patched_dol)
 
-        progress("Composing a new WBFS image with WIT...")
+        print("Composing a new WBFS image with WIT...")
         working_output = work / "output.wbfs"
         run_tool(
             wit,
@@ -293,14 +280,14 @@ def make_wbfs(
         )
         if not working_output.is_file() or working_output.stat().st_size == 0:
             raise ModderError("WIT did not create a non-empty WBFS output.")
-        progress("Checking the rebuilt WBFS...")
+        print("Checking the rebuilt WBFS...")
         rebuilt = work / "rebuilt"
         run_tool(
             wit,
             ["EXTRACT", tool_path(working_output), "-d", tool_path(rebuilt)],
             "WIT output verification",
         )
-        compared, patched_count = compare_game_files(extracted, rebuilt)
+        compared = compare_game_files(extracted, rebuilt)
         rebuilt_dol_path = rebuilt / "DATA" / "sys" / "main.dol"
         if sha256_file(rebuilt_dol_path) != hashlib.sha256(patched_dol).hexdigest():
             raise ModderError("Rebuilt WBFS main.dol does not match the requested patched executable.")
@@ -324,9 +311,7 @@ def make_wbfs(
             "output_sha256": sha256_file(destination),
             "source_dol_sha256": stock_digest,
             "output_dol_sha256": sha256_file(rebuilt_dol_path),
-            "endpoint": endpoint,
             "other_files_verified": compared,
-            "patched_files": patched_count,
             "output_size": destination.stat().st_size,
         }
     finally:
@@ -430,8 +415,6 @@ def run_ui() -> int:
         text = input(f"Output WBFS path [{default_output}]: ").strip().strip('"')
         destination = Path(text) if text else default_output
 
-    endpoint = DEFAULT_SERVER
-
     wit = select_tool("wit.exe", "Wiimms ISO Tool (WIT)")
     if wit is None:
         print("WIT is required. Install Wiimms ISO Tools or choose its wit.exe.")
@@ -445,13 +428,13 @@ def run_ui() -> int:
 
     print(f"\nInput:  {source.resolve()}")
     print(f"Output: {destination.resolve()}")
-    print(f"Server: {endpoint} (fixed)")
+    print(f"Server: {DEFAULT_SERVER} (fixed)")
     print("RVZ conversion requires about 5 GB of temporary disk space.")
     if input("Type BUILD to start: ").strip() != "BUILD":
         print("Cancelled.")
         return 0
     try:
-        result = make_wbfs(source, destination, wit, dolphin, endpoint)
+        result = make_wbfs(source, destination, wit, dolphin)
     except (OSError, ModderError) as exc:
         print(f"\nBuild failed: {exc}")
         return 1
@@ -459,7 +442,7 @@ def run_ui() -> int:
     print("\nDone. The new WBFS passed its checks.")
     print(f"Output: {destination.resolve()}")
     print(f"Size: {result['output_size']:,} bytes")
-    print(f"Server endpoint: {result['endpoint']}")
+    print(f"Server: {DEFAULT_SERVER}")
     print(f"Original image SHA-256 (unchanged): {result['source_sha256']}")
     print(f"Output WBFS SHA-256: {result['output_sha256']}")
     print(f"Stock DOL SHA-256: {result['source_dol_sha256']}")
@@ -475,10 +458,6 @@ def run_ui() -> int:
 
 if __name__ == "__main__":
     try:
-        if len(sys.argv) > 1 and sys.argv[1] == "--self-test":
-            validate_endpoint(DEFAULT_SERVER)
-            print("Wii Chess WFC Converter self-test passed.")
-            sys.exit(0)
         sys.exit(run_ui())
     except (OSError, ModderError) as exc:
         print(f"Error: {exc}")
