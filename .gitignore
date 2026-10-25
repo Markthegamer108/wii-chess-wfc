@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.exe
+*.wbfs
+*.iso
+*.rvz
+*.wad
+*.dol
+*.elf
+patches/*.ips
